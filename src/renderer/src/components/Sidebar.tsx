@@ -17,7 +17,12 @@ type Props = {
 export function Sidebar({ active, onSelectSection }: Props) {
   return (
     <div>
-      <div className="brand">Vault</div>
+      <div className="brand">
+        <span className="brand-icon" aria-hidden>
+          <Shield size={18} strokeWidth={1.8} />
+        </span>
+        Fortress
+      </div>
       <nav className="nav">
         {ITEMS.map((item) => (
           <button

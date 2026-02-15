@@ -1,17 +1,19 @@
 import { forwardRef } from 'react'
 import { Clock, Copy, Eye, EyeOff, Lock, Star } from 'lucide-react'
-import type { VaultEntry } from '../types/vault'
+import type { VaultItem } from '../types/vault'
 
 type Props = {
-  entry: VaultEntry | null
+  entry: VaultItem | null
   loading: boolean
   error: string | null
   showPassword: boolean
   onTogglePassword: () => void
+  autoLockMinutes: number
+  onCopyPassword: () => void
 }
 
 export const DetailsPanel = forwardRef<HTMLDivElement, Props>(
-  ({ entry, loading, error, showPassword, onTogglePassword }, ref) => {
+  ({ entry, loading, error, showPassword, onTogglePassword, autoLockMinutes, onCopyPassword }, ref) => {
     if (loading) return <div className="empty-state">Loading…</div>
     if (error) return <div className="empty-state error">Error: {error}</div>
     if (!entry) {
@@ -27,12 +29,12 @@ export const DetailsPanel = forwardRef<HTMLDivElement, Props>(
       <div className="details-content" ref={ref} tabIndex={-1}>
         <div className="details-header">
           <div>
-            <div className="details-title">{entry.title}</div>
+            <div className="details-title">{entry.name}</div>
             <div className="details-subtitle">
               {entry.type === 'password' ? 'Password' : 'Secure Note'}
-              {entry.favorite && (
+              {entry.tags.length > 0 && (
                 <span className="pill">
-                  <Star size={14} strokeWidth={1.6} aria-hidden /> Favorite
+                  <Star size={14} strokeWidth={1.6} aria-hidden /> {entry.tags[0].name}
                 </span>
               )}
             </div>
@@ -47,7 +49,7 @@ export const DetailsPanel = forwardRef<HTMLDivElement, Props>(
           <span className="value">
             <Lock size={16} strokeWidth={1.6} aria-hidden /> Locked
             <span className="pill">
-              <Clock size={14} strokeWidth={1.5} aria-hidden /> Auto-lock: 5 minutes
+              <Clock size={14} strokeWidth={1.5} aria-hidden /> Auto-lock: {autoLockMinutes} minutes
             </span>
           </span>
         </div>
@@ -65,7 +67,7 @@ export const DetailsPanel = forwardRef<HTMLDivElement, Props>(
             <span className="mono">
               {entry.type === 'password'
                 ? showPassword
-                  ? 'example-password'
+                  ? entry.password ?? '—'
                   : '••••••••••'
                 : 'Not applicable'}
             </span>
@@ -82,7 +84,7 @@ export const DetailsPanel = forwardRef<HTMLDivElement, Props>(
                     </>
                   )}
                 </button>
-                <button className="btn btn-ghost" disabled aria-disabled="true">
+                <button className="btn btn-ghost" onClick={onCopyPassword} disabled={!entry.password}>
                   <Copy size={16} strokeWidth={1.6} aria-hidden /> Copy
                 </button>
               </>

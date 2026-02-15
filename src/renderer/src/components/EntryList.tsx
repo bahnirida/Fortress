@@ -1,9 +1,9 @@
 import { EntryRow } from './EntryRow'
-import type { VaultEntry } from '../types/vault'
+import type { VaultItem } from '../types/vault'
 import { useEffect, useRef } from 'react'
 
 type Props = {
-  entries: VaultEntry[]
+  entries: VaultItem[]
   loading: boolean
   error: string | null
   selectedId: string | null
@@ -48,7 +48,7 @@ export function EntryList({
   }
 
   return (
-    <div className="entries" role="list" ref={listRef}>
+    <div className="entries scroll-container hide-scrollbar" role="list" ref={listRef}>
       {entries.map((entry, index) => (
         <EntryRow
           key={entry.id}

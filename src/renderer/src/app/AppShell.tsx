@@ -16,7 +16,7 @@ export function AppShell({ sidebar, main, details, titlebar, themeClass }: Props
       <div className="app-shell">
         <aside className="sidebar">{sidebar}</aside>
         <main className="main">{main}</main>
-        <section className="details">{details}</section>
+        <section className="details scroll-container hide-scrollbar">{details}</section>
       </div>
     </div>
   )

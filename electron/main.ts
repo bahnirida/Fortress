@@ -3,7 +3,8 @@ import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import { registerIpcHandlers } from './ipc'
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
 
 // The built directory structure
 //
@@ -25,6 +26,14 @@ process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL ? path.join(process.env.APP_ROOT, 
 
 let win: BrowserWindow | null
 
+process.on('unhandledRejection', (reason) => {
+  console.error('[main] Unhandled promise rejection:', reason)
+})
+
+process.on('uncaughtException', (error) => {
+  console.error('[main] Uncaught exception:', error)
+})
+
 function createWindow() {
   win = new BrowserWindow({
     icon: path.join(process.env.VITE_PUBLIC, 'electron-vite.svg'),
@@ -33,7 +42,6 @@ function createWindow() {
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true,
-      enableRemoteModule: false,
       preload: path.join(__dirname, 'preload.mjs'),
     },
     width: 1200,
@@ -42,7 +50,7 @@ function createWindow() {
     minHeight: 600,
     backgroundColor: '#0b0d12',
     frame: false,
-    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'hidden',
+    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : undefined,
     trafficLightPosition: process.platform === 'darwin' ? { x: 12, y: 14 } : undefined,
   })
 
@@ -75,4 +83,6 @@ app.on('activate', () => {
 app.whenReady().then(() => {
   registerIpcHandlers(ipcMain)
   createWindow()
+}).catch((error) => {
+  console.error('[main] Failed during app initialization:', error)
 })
