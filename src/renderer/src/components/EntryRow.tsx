@@ -1,9 +1,9 @@
 import type { KeyboardEvent } from 'react'
 import { KeyRound, StickyNote, Star } from 'lucide-react'
-import type { VaultEntry } from '../types/vault'
+import type { VaultItem } from '../types/vault'
 
 type Props = {
-  entry: VaultEntry
+  entry: VaultItem
   selected: boolean
   onSelect: () => void
   tabIndex?: number
@@ -28,8 +28,8 @@ export function EntryRow({ entry, selected, onSelect, tabIndex = -1 }: Props) {
       data-entry-id={entry.id}
     >
       <div className="entry-header">
-        <div className="entry-title">{entry.title}</div>
-        {entry.favorite && (
+        <div className="entry-title">{entry.name}</div>
+        {entry.tags.length > 0 && (
           <span className="pill">
             <Star size={14} strokeWidth={1.6} aria-hidden />
           </span>

@@ -4,12 +4,18 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "npm run dev:electron",
+    "dev:electron": "vite",
+    "dev:linux": "vite",
+    "sync:windows": "bash ./scripts/sync-to-windows.sh",
+    "dev:windows": "npm run sync:windows && /mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe -NoProfile -Command \"Set-Location 'C:\\dev\\password-manager'; npm run dev:electron\"",
+    "dev:web": "vite --open",
     "build": "tsc && vite build && electron-builder",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview"
   },
   "dependencies": {
+    "better-sqlite3": "^11.7.0",
     "lucide-react": "^0.379.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0"

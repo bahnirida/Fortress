@@ -1,15 +1,1 @@
-"use strict";
-const electron = require("electron");
-const vaultApi = {
-  ping: () => electron.ipcRenderer.invoke("app:ping"),
-  listEntries: () => electron.ipcRenderer.invoke("vault:listEntries"),
-  getEntry: (id) => electron.ipcRenderer.invoke("vault:getEntry", id)
-};
-const shellApi = {
-  minimize: () => electron.ipcRenderer.invoke("window:minimize"),
-  toggleMaximize: () => electron.ipcRenderer.invoke("window:toggleMaximize"),
-  close: () => electron.ipcRenderer.invoke("window:close"),
-  isMaximized: () => electron.ipcRenderer.invoke("window:isMaximized")
-};
-electron.contextBridge.exposeInMainWorld("vault", vaultApi);
-electron.contextBridge.exposeInMainWorld("shell", shellApi);
+"use strict";const e=require("electron"),o={ping:()=>e.ipcRenderer.invoke("app:ping"),createVault:(t,i)=>e.ipcRenderer.invoke("vault:create",t,i),openVault:(t,i)=>e.ipcRenderer.invoke("vault:open",t,i),lockVault:()=>e.ipcRenderer.invoke("vault:lock"),isUnlocked:()=>e.ipcRenderer.invoke("vault:isUnlocked"),changeMasterPassword:(t,i)=>e.ipcRenderer.invoke("vault:changeMasterPassword",t,i),exportEncryptedVault:t=>e.ipcRenderer.invoke("vault:exportEncryptedVault",t),getAutoLockMinutes:()=>e.ipcRenderer.invoke("vault:getAutoLockMinutes"),setAutoLockMinutes:t=>e.ipcRenderer.invoke("vault:setAutoLockMinutes",t),touchActivity:()=>e.ipcRenderer.invoke("vault:touchActivity"),listItems:t=>e.ipcRenderer.invoke("vault:listItems",t),getItem:t=>e.ipcRenderer.invoke("vault:getItem",t),createItem:t=>e.ipcRenderer.invoke("vault:createItem",t),updateItem:(t,i)=>e.ipcRenderer.invoke("vault:updateItem",t,i),deleteItem:t=>e.ipcRenderer.invoke("vault:deleteItem",t),listTags:()=>e.ipcRenderer.invoke("vault:listTags"),createTag:t=>e.ipcRenderer.invoke("vault:createTag",t),deleteTag:t=>e.ipcRenderer.invoke("vault:deleteTag",t),setItemTags:(t,i)=>e.ipcRenderer.invoke("vault:setItemTags",t,i),onStateChanged:t=>{const i=(a,n)=>t(n);return e.ipcRenderer.on("vault:stateChanged",i),()=>e.ipcRenderer.removeListener("vault:stateChanged",i)}},r={minimize:()=>e.ipcRenderer.invoke("window:minimize"),toggleMaximize:()=>e.ipcRenderer.invoke("window:toggleMaximize"),close:()=>e.ipcRenderer.invoke("window:close"),isMaximized:()=>e.ipcRenderer.invoke("window:isMaximized"),reload:()=>e.ipcRenderer.invoke("app:reload"),toggleDevTools:()=>e.ipcRenderer.invoke("app:toggleDevTools"),zoomIn:()=>e.ipcRenderer.invoke("app:zoomIn"),zoomOut:()=>e.ipcRenderer.invoke("app:zoomOut"),zoomReset:()=>e.ipcRenderer.invoke("app:zoomReset"),copyText:t=>e.ipcRenderer.invoke("app:copyText",t),copySecret:(t,i)=>e.ipcRenderer.invoke("app:copySecret",t,i),openImportDialog:()=>e.ipcRenderer.invoke("file:import"),openExportDialog:()=>e.ipcRenderer.invoke("file:export")};e.contextBridge.exposeInMainWorld("vault",o);e.contextBridge.exposeInMainWorld("shell",r);
