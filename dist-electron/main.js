@@ -1,16 +1,16 @@
-var V = Object.defineProperty;
-var M = (n, s, e) => s in n ? V(n, s, { enumerable: !0, configurable: !0, writable: !0, value: e }) : n[s] = e;
-var m = (n, s, e) => M(n, typeof s != "symbol" ? s + "" : s, e);
-import { app as p, BrowserWindow as c, clipboard as w, dialog as f, ipcMain as F } from "electron";
-import { fileURLToPath as W } from "node:url";
-import l from "node:path";
-import { EventEmitter as X } from "node:events";
-import E from "node:fs";
-import { randomUUID as y } from "node:crypto";
-import g from "better-sqlite3";
-const R = 1;
-function q(n) {
-  n.exec(`
+var __defProp = Object.defineProperty;
+var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
+var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
+import { app, BrowserWindow, clipboard, dialog, ipcMain } from "electron";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
+import { EventEmitter } from "node:events";
+import fs from "node:fs";
+import { randomUUID } from "node:crypto";
+import { createRequire } from "node:module";
+const SCHEMA_VERSION = 1;
+function migrationV1(db) {
+  db.exec(`
     CREATE TABLE IF NOT EXISTS items (
       id TEXT PRIMARY KEY,
       type TEXT NOT NULL,
@@ -41,80 +41,113 @@ function q(n) {
     CREATE INDEX IF NOT EXISTS idx_items_username ON items(username);
   `);
 }
-function O(n) {
-  const s = n.prepare("PRAGMA user_version;").get(), e = Number(s.user_version ?? 0);
-  if (e > R)
-    throw new Error(`Unsupported schema version ${e}. App supports up to ${R}.`);
-  e < 1 && (q(n), n.prepare("PRAGMA user_version = 1;").run());
+function runMigrations(db) {
+  const currentVersionRow = db.prepare("PRAGMA user_version;").get();
+  const currentVersion = Number(currentVersionRow.user_version ?? 0);
+  if (currentVersion > SCHEMA_VERSION) {
+    throw new Error(`Unsupported schema version ${currentVersion}. App supports up to ${SCHEMA_VERSION}.`);
+  }
+  if (currentVersion < 1) {
+    migrationV1(db);
+    db.prepare("PRAGMA user_version = 1;").run();
+  }
 }
-const z = 256e3, C = 10, K = 1, B = 240;
-function _(n) {
-  return n.replace(/'/g, "''");
+const require$1 = createRequire(import.meta.url);
+const Database = require$1("better-sqlite3");
+const DEFAULT_KDF_ITER = 256e3;
+const DEFAULT_AUTO_LOCK_MINUTES = 10;
+const MIN_AUTO_LOCK_MINUTES = 1;
+const MAX_AUTO_LOCK_MINUTES = 240;
+function escapePragmaString(value) {
+  return value.replace(/'/g, "''");
 }
-function h(n) {
-  if (n == null) return null;
-  const s = n.trim();
-  return s.length > 0 ? s : null;
+function sanitizeNullableText(value) {
+  if (value === void 0 || value === null) return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
 }
-function I(n) {
-  const s = n.trim();
-  if (!s)
+function sanitizeName(value) {
+  const normalized = value.trim();
+  if (!normalized) {
     throw new Error("Item name is required.");
-  return s;
+  }
+  return normalized;
 }
-function G(n) {
-  return n.replace(/([%_\\])/g, "\\$1");
+function escapeLikeTerm(value) {
+  return value.replace(/([%_\\])/g, "\\$1");
 }
-function k(n) {
-  return Number.isFinite(n) ? Math.min(B, Math.max(K, Math.floor(n))) : C;
+function normalizeAutoLockMinutes(value) {
+  if (!Number.isFinite(value)) return DEFAULT_AUTO_LOCK_MINUTES;
+  return Math.min(MAX_AUTO_LOCK_MINUTES, Math.max(MIN_AUTO_LOCK_MINUTES, Math.floor(value)));
 }
-class j extends X {
-  constructor(e) {
+class VaultService extends EventEmitter {
+  constructor(options) {
     super();
-    m(this, "db", null);
-    m(this, "vaultPath", null);
-    m(this, "kdfIter");
-    m(this, "autoLockMinutes");
-    m(this, "lastActivityAt", Date.now());
-    m(this, "autoLockTimer", null);
-    this.kdfIter = (e == null ? void 0 : e.kdfIter) ?? z, this.autoLockMinutes = k((e == null ? void 0 : e.autoLockMinutes) ?? C);
+    __publicField(this, "db", null);
+    __publicField(this, "vaultPath", null);
+    __publicField(this, "kdfIter");
+    __publicField(this, "autoLockMinutes");
+    __publicField(this, "lastActivityAt", Date.now());
+    __publicField(this, "autoLockTimer", null);
+    this.kdfIter = (options == null ? void 0 : options.kdfIter) ?? DEFAULT_KDF_ITER;
+    this.autoLockMinutes = normalizeAutoLockMinutes((options == null ? void 0 : options.autoLockMinutes) ?? DEFAULT_AUTO_LOCK_MINUTES);
   }
-  on(e, t) {
-    return super.on(e, t);
+  on(event, listener) {
+    return super.on(event, listener);
   }
-  emit(e) {
-    return super.emit(e);
+  emit(event) {
+    return super.emit(event);
   }
-  createVault(e, t) {
-    if (!e)
+  createVault(masterPassword, rawVaultPath) {
+    if (!masterPassword) {
       throw new Error("Master password is required.");
-    const r = l.resolve(t), o = l.dirname(r);
-    if (E.mkdirSync(o, { recursive: !0 }), E.existsSync(r) && E.statSync(r).size > 0)
+    }
+    const resolvedPath = path.resolve(rawVaultPath);
+    const parentDir = path.dirname(resolvedPath);
+    fs.mkdirSync(parentDir, { recursive: true });
+    if (fs.existsSync(resolvedPath) && fs.statSync(resolvedPath).size > 0) {
       throw new Error("Vault file already exists and is not empty.");
-    this.disconnect(!1);
-    const i = new g(r);
+    }
+    this.disconnect(false);
+    const db = new Database(resolvedPath);
     try {
-      this.applySqlcipherKeyAndPragmas(i, e), O(i), this.verifyUnlock(i), this.db = i, this.vaultPath = r, this.touchActivity(), this.emit("unlocked");
-    } catch (u) {
-      throw i.close(), u;
+      this.applySqlcipherKeyAndPragmas(db, masterPassword);
+      runMigrations(db);
+      this.verifyUnlock(db);
+      this.db = db;
+      this.vaultPath = resolvedPath;
+      this.touchActivity();
+      this.emit("unlocked");
+    } catch (error) {
+      db.close();
+      throw error;
     }
   }
-  openVault(e, t) {
-    if (!e)
+  openVault(masterPassword, rawVaultPath) {
+    if (!masterPassword) {
       throw new Error("Master password is required.");
-    const r = l.resolve(t);
-    if (!E.existsSync(r))
+    }
+    const resolvedPath = path.resolve(rawVaultPath);
+    if (!fs.existsSync(resolvedPath)) {
       throw new Error("Vault file was not found.");
-    this.disconnect(!1);
-    const o = new g(r);
+    }
+    this.disconnect(false);
+    const db = new Database(resolvedPath);
     try {
-      this.applySqlcipherKeyAndPragmas(o, e), this.verifyUnlock(o), O(o), this.db = o, this.vaultPath = r, this.touchActivity(), this.emit("unlocked");
+      this.applySqlcipherKeyAndPragmas(db, masterPassword);
+      this.verifyUnlock(db);
+      runMigrations(db);
+      this.db = db;
+      this.vaultPath = resolvedPath;
+      this.touchActivity();
+      this.emit("unlocked");
     } catch {
-      throw o.close(), new Error("Unable to unlock vault. Check password or file integrity.");
+      db.close();
+      throw new Error("Unable to unlock vault. Check password or file integrity.");
     }
   }
   lockVault() {
-    this.disconnect(!0);
+    this.disconnect(true);
   }
   isUnlocked() {
     return this.db !== null;
@@ -122,40 +155,52 @@ class j extends X {
   getVaultPath() {
     return this.vaultPath;
   }
-  changeMasterPassword(e, t) {
-    if (!e || !t)
+  changeMasterPassword(oldPassword, newPassword) {
+    if (!oldPassword || !newPassword) {
       throw new Error("Both old and new master passwords are required.");
-    const r = this.requireDb(), o = this.requireVaultPath(), i = new g(o, { readonly: !0 });
+    }
+    const db = this.requireDb();
+    const currentPath = this.requireVaultPath();
+    const probe = new Database(currentPath, { readonly: true });
     try {
-      this.applySqlcipherKeyAndPragmas(i, e), this.verifyUnlock(i);
+      this.applySqlcipherKeyAndPragmas(probe, oldPassword);
+      this.verifyUnlock(probe);
     } catch {
       throw new Error("Old master password is incorrect.");
     } finally {
-      i.close();
+      probe.close();
     }
-    const u = _(t);
-    r.exec(`PRAGMA rekey = '${u}';`), this.touchActivity();
+    const escapedNew = escapePragmaString(newPassword);
+    db.exec(`PRAGMA rekey = '${escapedNew}';`);
+    this.touchActivity();
   }
-  exportEncryptedVault(e) {
-    const t = this.requireVaultPath();
-    if (!this.isUnlocked())
+  exportEncryptedVault(copyToPath) {
+    const sourcePath = this.requireVaultPath();
+    if (!this.isUnlocked()) {
       throw new Error("Vault must be unlocked before export.");
-    const r = l.resolve(e);
-    E.mkdirSync(l.dirname(r), { recursive: !0 }), E.copyFileSync(t, r);
+    }
+    const resolvedDestination = path.resolve(copyToPath);
+    fs.mkdirSync(path.dirname(resolvedDestination), { recursive: true });
+    fs.copyFileSync(sourcePath, resolvedDestination);
   }
-  setAutoLockMinutes(e) {
-    return this.autoLockMinutes = k(e), this.scheduleAutoLock(), this.autoLockMinutes;
+  setAutoLockMinutes(minutes) {
+    this.autoLockMinutes = normalizeAutoLockMinutes(minutes);
+    this.scheduleAutoLock();
+    return this.autoLockMinutes;
   }
   getAutoLockMinutes() {
     return this.autoLockMinutes;
   }
   touchActivity() {
-    this.isUnlocked() && (this.lastActivityAt = Date.now(), this.scheduleAutoLock());
+    if (!this.isUnlocked()) return;
+    this.lastActivityAt = Date.now();
+    this.scheduleAutoLock();
   }
-  listItems(e) {
-    const t = this.requireDb();
+  listItems(query) {
+    const db = this.requireDb();
     this.touchActivity();
-    const r = e == null ? void 0 : e.trim(), o = r ? t.prepare(
+    const normalizedQuery = query == null ? void 0 : query.trim();
+    const rows = normalizedQuery ? db.prepare(
       `
             SELECT id, type, name, username, NULL as password, url, NULL as notes, createdAt, updatedAt
             FROM items
@@ -164,284 +209,502 @@ class j extends X {
                OR username LIKE ? ESCAPE '\\'
             ORDER BY updatedAt DESC;
           `
-    ).all(...this.searchParams(r)) : t.prepare(
+    ).all(...this.searchParams(normalizedQuery)) : db.prepare(
       `
             SELECT id, type, name, username, NULL as password, url, NULL as notes, createdAt, updatedAt
             FROM items
             ORDER BY updatedAt DESC;
           `
     ).all();
-    return this.attachTags(o);
+    return this.attachTags(rows);
   }
-  getItem(e) {
-    const t = this.requireDb();
+  getItem(id) {
+    const db = this.requireDb();
     this.touchActivity();
-    const r = t.prepare(
+    const row = db.prepare(
       `
         SELECT id, type, name, username, password, url, notes, createdAt, updatedAt
         FROM items
         WHERE id = ?;
       `
-    ).get(e);
-    return r ? this.attachTags([r])[0] : null;
+    ).get(id);
+    if (!row) return null;
+    return this.attachTags([row])[0];
   }
-  createItem(e) {
-    const t = this.requireDb();
+  createItem(payload) {
+    const db = this.requireDb();
     this.touchActivity();
-    const r = y(), o = Date.now(), i = {
-      id: r,
-      type: e.type,
-      name: I(e.name),
-      username: h(e.username),
-      password: h(e.password),
-      url: h(e.url),
-      notes: h(e.notes),
-      createdAt: o,
-      updatedAt: o
+    const id = randomUUID();
+    const now = Date.now();
+    const item = {
+      id,
+      type: payload.type,
+      name: sanitizeName(payload.name),
+      username: sanitizeNullableText(payload.username),
+      password: sanitizeNullableText(payload.password),
+      url: sanitizeNullableText(payload.url),
+      notes: sanitizeNullableText(payload.notes),
+      createdAt: now,
+      updatedAt: now
     };
-    return t.prepare(
+    db.prepare(
       `
       INSERT INTO items (id, type, name, username, password, url, notes, createdAt, updatedAt)
       VALUES (@id, @type, @name, @username, @password, @url, @notes, @createdAt, @updatedAt);
     `
-    ).run(i), this.getItem(r);
+    ).run(item);
+    return this.getItem(id);
   }
-  updateItem(e, t) {
-    const r = this.requireDb();
+  updateItem(id, payload) {
+    const db = this.requireDb();
     this.touchActivity();
-    const o = [], i = { id: e, updatedAt: Date.now() };
-    return t.type !== void 0 && (o.push("type = @type"), i.type = t.type), t.name !== void 0 && (o.push("name = @name"), i.name = I(t.name)), t.username !== void 0 && (o.push("username = @username"), i.username = h(t.username)), t.password !== void 0 && (o.push("password = @password"), i.password = h(t.password)), t.url !== void 0 && (o.push("url = @url"), i.url = h(t.url)), t.notes !== void 0 && (o.push("notes = @notes"), i.notes = h(t.notes)), o.push("updatedAt = @updatedAt"), r.prepare(`UPDATE items SET ${o.join(", ")} WHERE id = @id;`).run(i).changes === 0 ? null : this.getItem(e);
+    const updates = [];
+    const params = { id, updatedAt: Date.now() };
+    if (payload.type !== void 0) {
+      updates.push("type = @type");
+      params.type = payload.type;
+    }
+    if (payload.name !== void 0) {
+      updates.push("name = @name");
+      params.name = sanitizeName(payload.name);
+    }
+    if (payload.username !== void 0) {
+      updates.push("username = @username");
+      params.username = sanitizeNullableText(payload.username);
+    }
+    if (payload.password !== void 0) {
+      updates.push("password = @password");
+      params.password = sanitizeNullableText(payload.password);
+    }
+    if (payload.url !== void 0) {
+      updates.push("url = @url");
+      params.url = sanitizeNullableText(payload.url);
+    }
+    if (payload.notes !== void 0) {
+      updates.push("notes = @notes");
+      params.notes = sanitizeNullableText(payload.notes);
+    }
+    updates.push("updatedAt = @updatedAt");
+    const result = db.prepare(`UPDATE items SET ${updates.join(", ")} WHERE id = @id;`).run(params);
+    if (result.changes === 0) return null;
+    return this.getItem(id);
   }
-  deleteItem(e) {
-    const t = this.requireDb();
-    this.touchActivity(), t.prepare("DELETE FROM items WHERE id = ?;").run(e);
+  deleteItem(id) {
+    const db = this.requireDb();
+    this.touchActivity();
+    db.prepare("DELETE FROM items WHERE id = ?;").run(id);
   }
   listTags() {
-    const e = this.requireDb();
-    return this.touchActivity(), e.prepare("SELECT id, name FROM tags ORDER BY name COLLATE NOCASE ASC;").all();
-  }
-  createTag(e) {
-    const t = this.requireDb();
+    const db = this.requireDb();
     this.touchActivity();
-    const r = I(e), o = y();
-    return t.prepare("INSERT INTO tags (id, name) VALUES (?, ?);").run(o, r), { id: o, name: r };
+    return db.prepare("SELECT id, name FROM tags ORDER BY name COLLATE NOCASE ASC;").all();
   }
-  deleteTag(e) {
-    const t = this.requireDb();
-    this.touchActivity(), t.prepare("DELETE FROM tags WHERE id = ?;").run(e);
-  }
-  setItemTags(e, t) {
-    const r = this.requireDb();
+  createTag(name) {
+    const db = this.requireDb();
     this.touchActivity();
-    const o = [...new Set(t)];
-    r.transaction((u, d) => {
-      if (!r.prepare("SELECT 1 FROM items WHERE id = ?;").get(u))
+    const normalized = sanitizeName(name);
+    const id = randomUUID();
+    db.prepare("INSERT INTO tags (id, name) VALUES (?, ?);").run(id, normalized);
+    return { id, name: normalized };
+  }
+  deleteTag(id) {
+    const db = this.requireDb();
+    this.touchActivity();
+    db.prepare("DELETE FROM tags WHERE id = ?;").run(id);
+  }
+  setItemTags(itemId, tagIds) {
+    const db = this.requireDb();
+    this.touchActivity();
+    const dedupedTagIds = [...new Set(tagIds)];
+    const tx = db.transaction((targetItemId, targetTagIds) => {
+      const exists = db.prepare("SELECT 1 FROM items WHERE id = ?;").get(targetItemId);
+      if (!exists) {
         throw new Error("Item not found.");
-      if (d.length > 0) {
-        const v = d.map(() => "?").join(",");
-        if (r.prepare(`SELECT COUNT(*) as count FROM tags WHERE id IN (${v});`).get(...d).count !== d.length)
-          throw new Error("One or more tags do not exist.");
       }
-      r.prepare("DELETE FROM item_tags WHERE itemId = ?;").run(u);
-      const U = r.prepare("INSERT INTO item_tags (itemId, tagId) VALUES (?, ?);");
-      for (const v of d)
-        U.run(u, v);
-    })(e, o);
+      if (targetTagIds.length > 0) {
+        const placeholders = targetTagIds.map(() => "?").join(",");
+        const countRow = db.prepare(`SELECT COUNT(*) as count FROM tags WHERE id IN (${placeholders});`).get(...targetTagIds);
+        if (countRow.count !== targetTagIds.length) {
+          throw new Error("One or more tags do not exist.");
+        }
+      }
+      db.prepare("DELETE FROM item_tags WHERE itemId = ?;").run(targetItemId);
+      const insert = db.prepare("INSERT INTO item_tags (itemId, tagId) VALUES (?, ?);");
+      for (const tagId of targetTagIds) {
+        insert.run(targetItemId, tagId);
+      }
+    });
+    tx(itemId, dedupedTagIds);
   }
-  searchParams(e) {
-    const t = `%${G(e)}%`;
-    return [t, t, t];
+  searchParams(query) {
+    const likeValue = `%${escapeLikeTerm(query)}%`;
+    return [likeValue, likeValue, likeValue];
   }
-  attachTags(e) {
-    if (e.length === 0) return [];
-    const t = this.requireDb(), r = e.map(() => "?").join(","), o = t.prepare(
+  attachTags(items) {
+    if (items.length === 0) return [];
+    const db = this.requireDb();
+    const placeholders = items.map(() => "?").join(",");
+    const rows = db.prepare(
       `
         SELECT it.itemId as itemId, t.id as id, t.name as name
         FROM item_tags it
         INNER JOIN tags t ON t.id = it.tagId
-        WHERE it.itemId IN (${r})
+        WHERE it.itemId IN (${placeholders})
         ORDER BY t.name COLLATE NOCASE ASC;
       `
-    ).all(...e.map((u) => u.id)), i = /* @__PURE__ */ new Map();
-    for (const u of o) {
-      const d = i.get(u.itemId) ?? [];
-      d.push({ id: u.id, name: u.name }), i.set(u.itemId, d);
+    ).all(...items.map((item) => item.id));
+    const tagsByItem = /* @__PURE__ */ new Map();
+    for (const row of rows) {
+      const list = tagsByItem.get(row.itemId) ?? [];
+      list.push({ id: row.id, name: row.name });
+      tagsByItem.set(row.itemId, list);
     }
-    return e.map((u) => ({
-      ...u,
-      tags: i.get(u.id) ?? []
+    return items.map((item) => ({
+      ...item,
+      tags: tagsByItem.get(item.id) ?? []
     }));
   }
-  applySqlcipherKeyAndPragmas(e, t) {
-    const r = _(t);
-    e.exec(`PRAGMA key = '${r}';`), e.exec("PRAGMA cipher_page_size = 4096;"), e.exec(`PRAGMA kdf_iter = ${this.kdfIter};`), e.exec("PRAGMA foreign_keys = ON;"), e.exec("PRAGMA secure_delete = ON;"), e.exec("PRAGMA journal_mode = DELETE;"), e.exec("PRAGMA synchronous = FULL;");
+  applySqlcipherKeyAndPragmas(db, password) {
+    const escapedPassword = escapePragmaString(password);
+    db.exec(`PRAGMA key = '${escapedPassword}';`);
+    db.exec(`PRAGMA cipher_page_size = 4096;`);
+    db.exec(`PRAGMA kdf_iter = ${this.kdfIter};`);
+    db.exec("PRAGMA foreign_keys = ON;");
+    db.exec("PRAGMA secure_delete = ON;");
+    db.exec("PRAGMA journal_mode = DELETE;");
+    db.exec("PRAGMA synchronous = FULL;");
   }
-  verifyUnlock(e) {
+  verifyUnlock(db) {
     try {
-      const t = e.pragma("cipher_integrity_check");
-      if (t.length === 0)
+      const integrityRows = db.pragma("cipher_integrity_check");
+      if (integrityRows.length === 0) {
         throw new Error("cipher_integrity_check did not return a result.");
-      const r = String(Object.values(t[0])[0] ?? "").toLowerCase();
-      if (r && r !== "ok")
+      }
+      const firstValue = String(Object.values(integrityRows[0])[0] ?? "").toLowerCase();
+      if (firstValue && firstValue !== "ok") {
         throw new Error("cipher_integrity_check failed.");
+      }
       return;
     } catch {
-      e.pragma("user_version");
+      db.pragma("user_version");
     }
   }
   requireDb() {
-    if (!this.db)
+    if (!this.db) {
       throw new Error("Vault is locked.");
+    }
     return this.db;
   }
   requireVaultPath() {
-    if (!this.vaultPath)
+    if (!this.vaultPath) {
       throw new Error("No vault path is set.");
+    }
     return this.vaultPath;
   }
-  disconnect(e) {
-    this.autoLockTimer && (clearTimeout(this.autoLockTimer), this.autoLockTimer = null), this.db && (this.db.close(), this.db = null), e && this.emit("locked");
+  disconnect(emitLocked) {
+    if (this.autoLockTimer) {
+      clearTimeout(this.autoLockTimer);
+      this.autoLockTimer = null;
+    }
+    if (this.db) {
+      this.db.close();
+      this.db = null;
+    }
+    if (emitLocked) {
+      this.emit("locked");
+    }
   }
   scheduleAutoLock() {
-    if (this.autoLockTimer && (clearTimeout(this.autoLockTimer), this.autoLockTimer = null), !this.isUnlocked()) return;
-    const e = this.autoLockMinutes * 60 * 1e3, t = Date.now() - this.lastActivityAt, r = Math.max(e - t, 500);
+    if (this.autoLockTimer) {
+      clearTimeout(this.autoLockTimer);
+      this.autoLockTimer = null;
+    }
+    if (!this.isUnlocked()) return;
+    const timeoutMs = this.autoLockMinutes * 60 * 1e3;
+    const elapsed = Date.now() - this.lastActivityAt;
+    const remainingMs = Math.max(timeoutMs - elapsed, 500);
     this.autoLockTimer = setTimeout(() => {
       if (!this.isUnlocked()) return;
-      Date.now() - this.lastActivityAt >= e ? this.lockVault() : this.scheduleAutoLock();
-    }, r);
+      const idleMs = Date.now() - this.lastActivityAt;
+      if (idleMs >= timeoutMs) {
+        this.lockVault();
+      } else {
+        this.scheduleAutoLock();
+      }
+    }, remainingMs);
   }
 }
-const a = new j(), H = 0.5, Y = 3, N = 0.1, $ = 3e4, S = (n) => Math.min(Y, Math.max(H, n));
-function T(n) {
-  return n instanceof Error ? n.message : "Unexpected error";
+const vaultService = new VaultService();
+const ZOOM_MIN = 0.5;
+const ZOOM_MAX = 3;
+const ZOOM_STEP = 0.1;
+const DEFAULT_CLIPBOARD_CLEAR_MS = 3e4;
+const clampZoom = (value) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, value));
+function toErrorMessage(error) {
+  if (error instanceof Error) return error.message;
+  return "Unexpected error";
 }
-function b(n) {
-  for (const s of c.getAllWindows())
-    s.webContents.send("vault:stateChanged", { unlocked: n });
+function ok(data) {
+  return { ok: true, data };
 }
-function Z(n, s) {
+function fail(code, error) {
+  return {
+    ok: false,
+    error: {
+      code,
+      message: toErrorMessage(error)
+    }
+  };
+}
+function notifyVaultState(unlocked) {
+  for (const win2 of BrowserWindow.getAllWindows()) {
+    win2.webContents.send("vault:stateChanged", { unlocked });
+  }
+}
+function clearClipboardAfterDelay(snapshot, clearAfterMs) {
   setTimeout(() => {
-    w.readText() === n && w.clear();
-  }, s);
+    if (clipboard.readText() === snapshot) {
+      clipboard.clear();
+    }
+  }, clearAfterMs);
 }
-function Q(n) {
-  a.on("locked", () => b(!1)), a.on("unlocked", () => b(!0)), n.handle("app:ping", async () => "pong"), n.handle("vault:create", async (s, e, t) => {
+function registerIpcHandlers(ipcMain2) {
+  vaultService.on("locked", () => notifyVaultState(false));
+  vaultService.on("unlocked", () => notifyVaultState(true));
+  ipcMain2.handle("app:ping", async () => "pong");
+  ipcMain2.handle("vault:create", async (_event, masterPassword, vaultPath) => {
     try {
-      const r = (t == null ? void 0 : t.trim()) || `${p.getPath("userData")}\\vault.db`;
-      return a.createVault(e, r), { unlocked: !0, vaultPath: a.getVaultPath() };
-    } catch (r) {
-      throw new Error(T(r));
+      const targetPath = (vaultPath == null ? void 0 : vaultPath.trim()) || `${app.getPath("userData")}\\vault.db`;
+      vaultService.createVault(masterPassword, targetPath);
+      return ok({ unlocked: true, vaultPath: vaultService.getVaultPath() });
+    } catch (error) {
+      return fail("VAULT_CREATE_FAILED", error);
     }
-  }), n.handle("vault:open", async (s, e, t) => {
+  });
+  ipcMain2.handle("vault:open", async (_event, masterPassword, vaultPath) => {
     try {
-      return a.openVault(e, t), { unlocked: !0, vaultPath: a.getVaultPath() };
-    } catch (r) {
-      throw new Error(T(r));
+      vaultService.openVault(masterPassword, vaultPath);
+      return ok({ unlocked: true, vaultPath: vaultService.getVaultPath() });
+    } catch (error) {
+      return fail("VAULT_OPEN_FAILED", error);
     }
-  }), n.handle("vault:lock", async () => (a.lockVault(), { unlocked: !1 })), n.handle("vault:isUnlocked", async () => a.isUnlocked()), n.handle("vault:changeMasterPassword", async (s, e, t) => {
+  });
+  ipcMain2.handle("vault:lock", async () => {
+    vaultService.lockVault();
+    return { unlocked: false };
+  });
+  ipcMain2.handle("vault:isUnlocked", async () => {
+    return vaultService.isUnlocked();
+  });
+  ipcMain2.handle("vault:changeMasterPassword", async (_event, oldPassword, newPassword) => {
     try {
-      return a.changeMasterPassword(e, t), !0;
-    } catch (r) {
-      throw new Error(T(r));
+      vaultService.changeMasterPassword(oldPassword, newPassword);
+      return true;
+    } catch (error) {
+      throw new Error(toErrorMessage(error));
     }
-  }), n.handle("vault:exportEncryptedVault", async (s, e) => {
+  });
+  ipcMain2.handle("vault:exportEncryptedVault", async (_event, copyToPath) => {
     try {
-      return a.exportEncryptedVault(e), !0;
-    } catch (t) {
-      throw new Error(T(t));
+      vaultService.exportEncryptedVault(copyToPath);
+      return true;
+    } catch (error) {
+      throw new Error(toErrorMessage(error));
     }
-  }), n.handle("vault:getAutoLockMinutes", async () => a.getAutoLockMinutes()), n.handle("vault:setAutoLockMinutes", async (s, e) => a.setAutoLockMinutes(e)), n.handle("vault:touchActivity", async () => (a.touchActivity(), !0)), n.handle("vault:listItems", async (s, e) => a.listItems(e)), n.handle("vault:getItem", async (s, e) => a.getItem(e)), n.handle("vault:createItem", async (s, e) => a.createItem(e)), n.handle("vault:updateItem", async (s, e, t) => a.updateItem(e, t)), n.handle("vault:deleteItem", async (s, e) => (a.deleteItem(e), !0)), n.handle("vault:listTags", async () => a.listTags()), n.handle("vault:createTag", async (s, e) => a.createTag(e)), n.handle("vault:deleteTag", async (s, e) => (a.deleteTag(e), !0)), n.handle("vault:setItemTags", async (s, e, t) => (a.setItemTags(e, t), !0)), n.handle("window:minimize", (s) => {
-    const e = c.fromWebContents(s.sender);
-    e == null || e.minimize();
-  }), n.handle("window:isMaximized", (s) => {
-    const e = c.fromWebContents(s.sender);
-    return (e == null ? void 0 : e.isMaximized()) ?? !1;
-  }), n.handle("window:toggleMaximize", (s) => {
-    const e = c.fromWebContents(s.sender);
-    return e ? e.isMaximized() ? (e.unmaximize(), !1) : (e.maximize(), !0) : !1;
-  }), n.handle("window:close", (s) => {
-    const e = c.fromWebContents(s.sender);
-    e == null || e.close();
-  }), n.handle("app:reload", (s) => {
-    const e = c.fromWebContents(s.sender);
-    e == null || e.reload();
-  }), n.handle("app:toggleDevTools", (s) => {
-    const e = c.fromWebContents(s.sender), t = e == null ? void 0 : e.webContents;
-    return t ? t.isDevToolsOpened() ? (t.closeDevTools(), !1) : (t.openDevTools({ mode: "detach" }), !0) : !1;
-  }), n.handle("app:zoomIn", (s) => {
-    const e = c.fromWebContents(s.sender), t = e == null ? void 0 : e.webContents;
-    if (!t) return 1;
-    const r = S(t.getZoomFactor() + N);
-    return t.setZoomFactor(r), r;
-  }), n.handle("app:zoomOut", (s) => {
-    const e = c.fromWebContents(s.sender), t = e == null ? void 0 : e.webContents;
-    if (!t) return 1;
-    const r = S(t.getZoomFactor() - N);
-    return t.setZoomFactor(r), r;
-  }), n.handle("app:zoomReset", (s) => {
-    const e = c.fromWebContents(s.sender), t = e == null ? void 0 : e.webContents;
-    return t && t.setZoomFactor(1), 1;
-  }), n.handle("app:copyText", async (s, e) => (w.writeText(e ?? ""), !0)), n.handle("app:copySecret", async (s, e, t) => {
-    const r = e ?? "";
-    return w.writeText(r), Z(r, t ?? $), !0;
-  }), n.handle("file:import", async (s) => {
-    const e = c.fromWebContents(s.sender), t = {
+  });
+  ipcMain2.handle("vault:getAutoLockMinutes", async () => vaultService.getAutoLockMinutes());
+  ipcMain2.handle("vault:setAutoLockMinutes", async (_event, minutes) => {
+    return vaultService.setAutoLockMinutes(minutes);
+  });
+  ipcMain2.handle("vault:touchActivity", async () => {
+    vaultService.touchActivity();
+    return true;
+  });
+  ipcMain2.handle("vault:listItems", async (_event, query) => {
+    return vaultService.listItems(query);
+  });
+  ipcMain2.handle("vault:getItem", async (_event, id) => {
+    return vaultService.getItem(id);
+  });
+  ipcMain2.handle("vault:createItem", async (_event, payload) => {
+    return vaultService.createItem(payload);
+  });
+  ipcMain2.handle("vault:updateItem", async (_event, id, payload) => {
+    return vaultService.updateItem(id, payload);
+  });
+  ipcMain2.handle("vault:deleteItem", async (_event, id) => {
+    vaultService.deleteItem(id);
+    return true;
+  });
+  ipcMain2.handle("vault:listTags", async () => vaultService.listTags());
+  ipcMain2.handle("vault:createTag", async (_event, name) => {
+    return vaultService.createTag(name);
+  });
+  ipcMain2.handle("vault:deleteTag", async (_event, id) => {
+    vaultService.deleteTag(id);
+    return true;
+  });
+  ipcMain2.handle("vault:setItemTags", async (_event, itemId, tagIds) => {
+    vaultService.setItemTags(itemId, tagIds);
+    return true;
+  });
+  ipcMain2.handle("window:minimize", (event) => {
+    const win2 = BrowserWindow.fromWebContents(event.sender);
+    win2 == null ? void 0 : win2.minimize();
+  });
+  ipcMain2.handle("window:isMaximized", (event) => {
+    const win2 = BrowserWindow.fromWebContents(event.sender);
+    return (win2 == null ? void 0 : win2.isMaximized()) ?? false;
+  });
+  ipcMain2.handle("window:toggleMaximize", (event) => {
+    const win2 = BrowserWindow.fromWebContents(event.sender);
+    if (!win2) return false;
+    if (win2.isMaximized()) {
+      win2.unmaximize();
+      return false;
+    }
+    win2.maximize();
+    return true;
+  });
+  ipcMain2.handle("window:close", (event) => {
+    const win2 = BrowserWindow.fromWebContents(event.sender);
+    win2 == null ? void 0 : win2.close();
+  });
+  ipcMain2.handle("app:reload", (event) => {
+    const win2 = BrowserWindow.fromWebContents(event.sender);
+    win2 == null ? void 0 : win2.reload();
+  });
+  ipcMain2.handle("app:toggleDevTools", (event) => {
+    const win2 = BrowserWindow.fromWebContents(event.sender);
+    const wc = win2 == null ? void 0 : win2.webContents;
+    if (!wc) return false;
+    if (wc.isDevToolsOpened()) {
+      wc.closeDevTools();
+      return false;
+    }
+    wc.openDevTools({ mode: "detach" });
+    return true;
+  });
+  ipcMain2.handle("app:zoomIn", (event) => {
+    const win2 = BrowserWindow.fromWebContents(event.sender);
+    const wc = win2 == null ? void 0 : win2.webContents;
+    if (!wc) return 1;
+    const next = clampZoom(wc.getZoomFactor() + ZOOM_STEP);
+    wc.setZoomFactor(next);
+    return next;
+  });
+  ipcMain2.handle("app:zoomOut", (event) => {
+    const win2 = BrowserWindow.fromWebContents(event.sender);
+    const wc = win2 == null ? void 0 : win2.webContents;
+    if (!wc) return 1;
+    const next = clampZoom(wc.getZoomFactor() - ZOOM_STEP);
+    wc.setZoomFactor(next);
+    return next;
+  });
+  ipcMain2.handle("app:zoomReset", (event) => {
+    const win2 = BrowserWindow.fromWebContents(event.sender);
+    const wc = win2 == null ? void 0 : win2.webContents;
+    if (!wc) return 1;
+    wc.setZoomFactor(1);
+    return 1;
+  });
+  ipcMain2.handle("app:copyText", async (_event, text) => {
+    clipboard.writeText(text ?? "");
+    return true;
+  });
+  ipcMain2.handle("app:copySecret", async (_event, text, clearAfterMs) => {
+    const value = text ?? "";
+    clipboard.writeText(value);
+    clearClipboardAfterDelay(value, clearAfterMs ?? DEFAULT_CLIPBOARD_CLEAR_MS);
+    return true;
+  });
+  ipcMain2.handle("file:import", async (event) => {
+    const win2 = BrowserWindow.fromWebContents(event.sender);
+    const dialogOptions = {
       title: "Open Vault",
       properties: ["openFile"],
       filters: [
         { name: "Encrypted Vault", extensions: ["db", "sqlite", "vault"] },
         { name: "All Files", extensions: ["*"] }
       ]
-    }, r = e ? await f.showOpenDialog(e, t) : await f.showOpenDialog(t);
-    return r.canceled || r.filePaths.length === 0 ? null : r.filePaths[0];
-  }), n.handle("file:export", async (s) => {
-    const e = c.fromWebContents(s.sender), t = {
+    };
+    const result = win2 ? await dialog.showOpenDialog(win2, dialogOptions) : await dialog.showOpenDialog(dialogOptions);
+    if (result.canceled || result.filePaths.length === 0) return null;
+    return result.filePaths[0];
+  });
+  ipcMain2.handle("file:export", async (event) => {
+    const win2 = BrowserWindow.fromWebContents(event.sender);
+    const dialogOptions = {
       title: "Export Encrypted Vault Copy",
       defaultPath: "vault-export.db",
       filters: [
         { name: "Encrypted Vault", extensions: ["db"] },
         { name: "All Files", extensions: ["*"] }
       ]
-    }, r = e ? await f.showSaveDialog(e, t) : await f.showSaveDialog(t);
-    return r.canceled || !r.filePath ? null : r.filePath;
+    };
+    const result = win2 ? await dialog.showSaveDialog(win2, dialogOptions) : await dialog.showSaveDialog(dialogOptions);
+    if (result.canceled || !result.filePath) return null;
+    return result.filePath;
   });
 }
-const D = l.dirname(W(import.meta.url));
-process.env.APP_ROOT = l.join(D, "..");
-const L = process.env.VITE_DEV_SERVER_URL, ce = l.join(process.env.APP_ROOT, "dist-electron"), P = l.join(process.env.APP_ROOT, "dist");
-process.env.VITE_PUBLIC = L ? l.join(process.env.APP_ROOT, "public") : P;
-let A;
-function x() {
-  A = new c({
-    icon: l.join(process.env.VITE_PUBLIC, "electron-vite.svg"),
+const __filename$1 = fileURLToPath(import.meta.url);
+const __dirname$1 = path.dirname(__filename$1);
+process.env.APP_ROOT = path.join(__dirname$1, "..");
+const VITE_DEV_SERVER_URL = process.env["VITE_DEV_SERVER_URL"];
+const MAIN_DIST = path.join(process.env.APP_ROOT, "dist-electron");
+const RENDERER_DIST = path.join(process.env.APP_ROOT, "dist");
+process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL ? path.join(process.env.APP_ROOT, "public") : RENDERER_DIST;
+let win;
+process.on("unhandledRejection", (reason) => {
+  console.error("[main] Unhandled promise rejection:", reason);
+});
+process.on("uncaughtException", (error) => {
+  console.error("[main] Uncaught exception:", error);
+});
+function createWindow() {
+  win = new BrowserWindow({
+    icon: path.join(process.env.VITE_PUBLIC, "electron-vite.svg"),
     webPreferences: {
       // Security-first defaults for a password manager UI
-      nodeIntegration: !1,
-      contextIsolation: !0,
-      sandbox: !0,
-      preload: l.join(D, "preload.mjs")
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
+      preload: path.join(__dirname$1, "preload.mjs")
     },
     width: 1200,
     height: 800,
     minWidth: 900,
     minHeight: 600,
     backgroundColor: "#0b0d12",
-    frame: !1,
+    frame: false,
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : void 0,
     trafficLightPosition: process.platform === "darwin" ? { x: 12, y: 14 } : void 0
-  }), L ? A.loadURL(L) : A.loadFile(l.join(P, "index.html"));
+  });
+  if (VITE_DEV_SERVER_URL) {
+    win.loadURL(VITE_DEV_SERVER_URL);
+  } else {
+    win.loadFile(path.join(RENDERER_DIST, "index.html"));
+  }
 }
-p.on("window-all-closed", () => {
-  process.platform !== "darwin" && (p.quit(), A = null);
+app.on("window-all-closed", () => {
+  if (process.platform !== "darwin") {
+    app.quit();
+    win = null;
+  }
 });
-p.on("activate", () => {
-  c.getAllWindows().length === 0 && x();
+app.on("activate", () => {
+  if (BrowserWindow.getAllWindows().length === 0) {
+    createWindow();
+  }
 });
-p.whenReady().then(() => {
-  Q(F), x();
+app.whenReady().then(() => {
+  registerIpcHandlers(ipcMain);
+  createWindow();
+}).catch((error) => {
+  console.error("[main] Failed during app initialization:", error);
 });
 export {
-  ce as MAIN_DIST,
-  P as RENDERER_DIST,
-  L as VITE_DEV_SERVER_URL
+  MAIN_DIST,
+  RENDERER_DIST,
+  VITE_DEV_SERVER_URL
 };

@@ -1,1 +1,45 @@
-"use strict";const e=require("electron"),o={ping:()=>e.ipcRenderer.invoke("app:ping"),createVault:(t,i)=>e.ipcRenderer.invoke("vault:create",t,i),openVault:(t,i)=>e.ipcRenderer.invoke("vault:open",t,i),lockVault:()=>e.ipcRenderer.invoke("vault:lock"),isUnlocked:()=>e.ipcRenderer.invoke("vault:isUnlocked"),changeMasterPassword:(t,i)=>e.ipcRenderer.invoke("vault:changeMasterPassword",t,i),exportEncryptedVault:t=>e.ipcRenderer.invoke("vault:exportEncryptedVault",t),getAutoLockMinutes:()=>e.ipcRenderer.invoke("vault:getAutoLockMinutes"),setAutoLockMinutes:t=>e.ipcRenderer.invoke("vault:setAutoLockMinutes",t),touchActivity:()=>e.ipcRenderer.invoke("vault:touchActivity"),listItems:t=>e.ipcRenderer.invoke("vault:listItems",t),getItem:t=>e.ipcRenderer.invoke("vault:getItem",t),createItem:t=>e.ipcRenderer.invoke("vault:createItem",t),updateItem:(t,i)=>e.ipcRenderer.invoke("vault:updateItem",t,i),deleteItem:t=>e.ipcRenderer.invoke("vault:deleteItem",t),listTags:()=>e.ipcRenderer.invoke("vault:listTags"),createTag:t=>e.ipcRenderer.invoke("vault:createTag",t),deleteTag:t=>e.ipcRenderer.invoke("vault:deleteTag",t),setItemTags:(t,i)=>e.ipcRenderer.invoke("vault:setItemTags",t,i),onStateChanged:t=>{const i=(a,n)=>t(n);return e.ipcRenderer.on("vault:stateChanged",i),()=>e.ipcRenderer.removeListener("vault:stateChanged",i)}},r={minimize:()=>e.ipcRenderer.invoke("window:minimize"),toggleMaximize:()=>e.ipcRenderer.invoke("window:toggleMaximize"),close:()=>e.ipcRenderer.invoke("window:close"),isMaximized:()=>e.ipcRenderer.invoke("window:isMaximized"),reload:()=>e.ipcRenderer.invoke("app:reload"),toggleDevTools:()=>e.ipcRenderer.invoke("app:toggleDevTools"),zoomIn:()=>e.ipcRenderer.invoke("app:zoomIn"),zoomOut:()=>e.ipcRenderer.invoke("app:zoomOut"),zoomReset:()=>e.ipcRenderer.invoke("app:zoomReset"),copyText:t=>e.ipcRenderer.invoke("app:copyText",t),copySecret:(t,i)=>e.ipcRenderer.invoke("app:copySecret",t,i),openImportDialog:()=>e.ipcRenderer.invoke("file:import"),openExportDialog:()=>e.ipcRenderer.invoke("file:export")};e.contextBridge.exposeInMainWorld("vault",o);e.contextBridge.exposeInMainWorld("shell",r);
+"use strict";
+const electron = require("electron");
+const vaultApi = {
+  ping: () => electron.ipcRenderer.invoke("app:ping"),
+  createVault: (masterPassword, vaultPath) => electron.ipcRenderer.invoke("vault:create", masterPassword, vaultPath),
+  openVault: (masterPassword, vaultPath) => electron.ipcRenderer.invoke("vault:open", masterPassword, vaultPath),
+  lockVault: () => electron.ipcRenderer.invoke("vault:lock"),
+  isUnlocked: () => electron.ipcRenderer.invoke("vault:isUnlocked"),
+  changeMasterPassword: (oldPassword, newPassword) => electron.ipcRenderer.invoke("vault:changeMasterPassword", oldPassword, newPassword),
+  exportEncryptedVault: (copyToPath) => electron.ipcRenderer.invoke("vault:exportEncryptedVault", copyToPath),
+  getAutoLockMinutes: () => electron.ipcRenderer.invoke("vault:getAutoLockMinutes"),
+  setAutoLockMinutes: (minutes) => electron.ipcRenderer.invoke("vault:setAutoLockMinutes", minutes),
+  touchActivity: () => electron.ipcRenderer.invoke("vault:touchActivity"),
+  listItems: (query) => electron.ipcRenderer.invoke("vault:listItems", query),
+  getItem: (id) => electron.ipcRenderer.invoke("vault:getItem", id),
+  createItem: (payload) => electron.ipcRenderer.invoke("vault:createItem", payload),
+  updateItem: (id, payload) => electron.ipcRenderer.invoke("vault:updateItem", id, payload),
+  deleteItem: (id) => electron.ipcRenderer.invoke("vault:deleteItem", id),
+  listTags: () => electron.ipcRenderer.invoke("vault:listTags"),
+  createTag: (name) => electron.ipcRenderer.invoke("vault:createTag", name),
+  deleteTag: (id) => electron.ipcRenderer.invoke("vault:deleteTag", id),
+  setItemTags: (itemId, tagIds) => electron.ipcRenderer.invoke("vault:setItemTags", itemId, tagIds),
+  onStateChanged: (listener) => {
+    const handler = (_event, state) => listener(state);
+    electron.ipcRenderer.on("vault:stateChanged", handler);
+    return () => electron.ipcRenderer.removeListener("vault:stateChanged", handler);
+  }
+};
+const shellApi = {
+  minimize: () => electron.ipcRenderer.invoke("window:minimize"),
+  toggleMaximize: () => electron.ipcRenderer.invoke("window:toggleMaximize"),
+  close: () => electron.ipcRenderer.invoke("window:close"),
+  isMaximized: () => electron.ipcRenderer.invoke("window:isMaximized"),
+  reload: () => electron.ipcRenderer.invoke("app:reload"),
+  toggleDevTools: () => electron.ipcRenderer.invoke("app:toggleDevTools"),
+  zoomIn: () => electron.ipcRenderer.invoke("app:zoomIn"),
+  zoomOut: () => electron.ipcRenderer.invoke("app:zoomOut"),
+  zoomReset: () => electron.ipcRenderer.invoke("app:zoomReset"),
+  copyText: (text) => electron.ipcRenderer.invoke("app:copyText", text),
+  copySecret: (text, clearAfterMs) => electron.ipcRenderer.invoke("app:copySecret", text, clearAfterMs),
+  openImportDialog: () => electron.ipcRenderer.invoke("file:import"),
+  openExportDialog: () => electron.ipcRenderer.invoke("file:export")
+};
+electron.contextBridge.exposeInMainWorld("vault", vaultApi);
+electron.contextBridge.exposeInMainWorld("shell", shellApi);
